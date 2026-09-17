@@ -40,3 +40,6 @@ temp/
 *.stp
 *.scad
 features.json
+
+# Except test files
+!test-cube.stl
