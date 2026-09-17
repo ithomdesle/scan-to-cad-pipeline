@@ -9,9 +9,10 @@ import {
 import {
   createFeatureExtractionController,
   DEFAULT_FEATURE_EXTRACTION_OPTIONS,
-  DEFAULT_PANEL_DETECTION_OPTIONS,
-  extractPanelSet,
-  getIsTurnedPart,
+  DEFAULT_POLYHEDRAL_RECONSTRUCTION_OPTIONS,
+  planReconstruction,
+  reconstructPolyhedron,
+  ReconstructionStrategy,
   FeatureKind,
   computeMeshVolume,
 } from "../../../feature-extraction/index.js";
@@ -125,13 +126,11 @@ export const createScanJobController = (jobStore: JobStore) =>
           DEFAULT_FEATURE_EXTRACTION_OPTIONS,
         );
 
-        const panelSet = getIsTurnedPart(specification.features, specification.metadata.surfaceArea)
-          ? null
-          : extractPanelSet(
-              cleaningResult.mesh,
-              DEFAULT_FEATURE_EXTRACTION_OPTIONS.segmentationAngleToleranceDegrees,
-              DEFAULT_PANEL_DETECTION_OPTIONS,
-            );
+        const plan = planReconstruction(
+          cleaningResult.mesh,
+          specification,
+          DEFAULT_FEATURE_EXTRACTION_OPTIONS.segmentationAngleToleranceDegrees,
+        );
         await writeFile(
           join(job.outputDirectory, "features.json"),
           `${JSON.stringify(specification, null, 2)}\n`,
@@ -139,10 +138,22 @@ export const createScanJobController = (jobStore: JobStore) =>
         );
 
         jobStore.update(jobId, { progressMessage: "Building the solid" });
-        const exportResult = await stepExportController.exportScript(
-          panelSet ? composePanelSetScript(panelSet) : composeBuild123dScript(specification),
-          job.outputDirectory,
-        );
+
+        const exportResult =
+          plan.strategy === ReconstructionStrategy.EXACT
+            ? await stepExportController.exportFaces(
+                reconstructPolyhedron(
+                  cleaningResult.mesh,
+                  DEFAULT_POLYHEDRAL_RECONSTRUCTION_OPTIONS,
+                ).faces,
+                job.outputDirectory,
+              )
+            : await stepExportController.exportScript(
+                plan.strategy === ReconstructionStrategy.PANELS && plan.panelSet
+                  ? composePanelSetScript(plan.panelSet)
+                  : composeBuild123dScript(specification),
+                job.outputDirectory,
+              );
 
         if (!exportResult.isSuccess) {
           throw new Error(exportResult.error ?? "The solid could not be built.");
@@ -167,27 +178,34 @@ export const createScanJobController = (jobStore: JobStore) =>
             widthInMillimetres: specification.dimensions.length,
             heightInMillimetres: specification.dimensions.width,
             thicknessInMillimetres: specification.dimensions.height,
-            cutoutCount: panelSet
-              ? panelSet.panels.reduce((total, panel) => total + panel.cutouts.length, 0)
+            cutoutCount: plan.panelSet
+              ? plan.panelSet.panels.reduce((total, panel) => total + panel.cutouts.length, 0)
               : holeCount,
             outlinePointCount: specification.features.length,
             volumeInCubicMillimetres: exportResult.volume ?? 0,
           }),
-          featureSummary: panelSet
+          featureSummary: plan.panelSet
             ? Object.freeze([
-                panelSet.panels.length === 1
-                  ? `Plate ${panelSet.panels[0].thicknessInMillimetres.toFixed(2)} mm thick`
-                  : `${panelSet.panels.length} panels, ${panelSet.panels.map((panel) => `${panel.thicknessInMillimetres.toFixed(1)} mm`).join(" + ")}`,
-                `${panelSet.panels.reduce((total, panel) => total + panel.cutouts.length, 0)} cutout${panelSet.panels.reduce((total, panel) => total + panel.cutouts.length, 0) === 1 ? "" : "s"}`,
-                `${(100 * (exportResult.volume ?? 0)) / measuredVolume < 0 ? "" : ""}${Math.round((100 * (exportResult.volume ?? 0)) / measuredVolume)}% of the scanned volume`,
+                plan.panelSet.panels.length === 1
+                  ? `Plate ${plan.panelSet.panels[0].thicknessInMillimetres.toFixed(2)} mm thick`
+                  : `${plan.panelSet.panels.length} panels, ${plan.panelSet.panels.map((panel) => `${panel.thicknessInMillimetres.toFixed(1)} mm`).join(" + ")}`,
+                `${plan.panelSet.panels.reduce((total, panel) => total + panel.cutouts.length, 0)} cutouts`,
+                `${Math.round((100 * (exportResult.volume ?? 0)) / measuredVolume)}% of the measured volume`,
                 `${statistics.triangleCount} triangles, ${statistics.isWatertight ? "watertight" : "open mesh"}`,
               ])
-            : Object.freeze([
-                `${planeCount} flat face${planeCount === 1 ? "" : "s"}`,
-                `${cylinderCount} round face${cylinderCount === 1 ? "" : "s"}`,
-                `${holeCount} hole${holeCount === 1 ? "" : "s"}`,
-                `${statistics.triangleCount} triangles, ${statistics.isWatertight ? "watertight" : "open mesh"}`,
-              ]),
+            : plan.strategy === ReconstructionStrategy.EXACT
+              ? Object.freeze([
+                  "Rebuilt exactly from the mesh",
+                  plan.reason,
+                  `${Math.round((100 * (exportResult.volume ?? 0)) / measuredVolume)}% of the measured volume`,
+                  `${statistics.triangleCount} triangles, ${statistics.isWatertight ? "watertight" : "open mesh"}`,
+                ])
+              : Object.freeze([
+                  `${planeCount} flat face${planeCount === 1 ? "" : "s"}`,
+                  `${cylinderCount} round face${cylinderCount === 1 ? "" : "s"}`,
+                  `${holeCount} hole${holeCount === 1 ? "" : "s"}`,
+                  `${statistics.triangleCount} triangles, ${statistics.isWatertight ? "watertight" : "open mesh"}`,
+                ]),
         });
       } catch (error) {
         jobStore.update(jobId, {

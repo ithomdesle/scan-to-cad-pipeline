@@ -2,13 +2,8 @@ import type { Vector3 } from "../../../../shared/types/vector.types.js";
 import {
   createVector3,
   dotProduct,
-  normalizeVector,
   subtractVectors,
 } from "../../../../shared/utils/vector/vector.js";
-import {
-  decomposeSymmetricMatrix,
-  type SymmetricMatrix3,
-} from "../../../../shared/utils/symmetric-eigen-decomposition/symmetric-eigen-decomposition.js";
 import type { TriangleAttributes } from "../../../mesh/services/mesh-topology/mesh-topology.js";
 
 export type PlaneFit = {
@@ -48,43 +43,30 @@ export const fitPlane = (
     centroidZ / totalWeight,
   );
 
-  const covariance = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  // The normal comes from the triangles' own orientations rather than a covariance of their
+  // centroids: a face of two triangles has only two centroids, which do not determine a plane, and
+  // the eigen solver then returns an arbitrary direction out of the null space.
+  let normalX = 0;
+  let normalY = 0;
+  let normalZ = 0;
 
   for (const triangleIndex of triangleIndices) {
     const weight = attributes.areas[triangleIndex];
-    const offsetX = attributes.centroids[triangleIndex * 3] - origin.x;
-    const offsetY = attributes.centroids[triangleIndex * 3 + 1] - origin.y;
-    const offsetZ = attributes.centroids[triangleIndex * 3 + 2] - origin.z;
-
-    covariance[0] += weight * offsetX * offsetX;
-    covariance[1] += weight * offsetX * offsetY;
-    covariance[2] += weight * offsetX * offsetZ;
-    covariance[4] += weight * offsetY * offsetY;
-    covariance[5] += weight * offsetY * offsetZ;
-    covariance[8] += weight * offsetZ * offsetZ;
+    normalX += weight * attributes.normals[triangleIndex * 3];
+    normalY += weight * attributes.normals[triangleIndex * 3 + 1];
+    normalZ += weight * attributes.normals[triangleIndex * 3 + 2];
   }
 
-  covariance[3] = covariance[1];
-  covariance[6] = covariance[2];
-  covariance[7] = covariance[5];
-
-  const eigenPairs = decomposeSymmetricMatrix(covariance as unknown as SymmetricMatrix3);
-  const fittedNormal = normalizeVector(eigenPairs[2].vector);
-
-  // The eigenvector sign is arbitrary, so it is flipped to agree with the surface winding.
-  let outwardAgreement = 0;
-  for (const triangleIndex of triangleIndices) {
-    outwardAgreement +=
-      attributes.areas[triangleIndex] *
-      (fittedNormal.x * attributes.normals[triangleIndex * 3] +
-        fittedNormal.y * attributes.normals[triangleIndex * 3 + 1] +
-        fittedNormal.z * attributes.normals[triangleIndex * 3 + 2]);
+  const normalLength = Math.sqrt(normalX ** 2 + normalY ** 2 + normalZ ** 2);
+  if (normalLength === 0) {
+    return Object.freeze({ normal: createVector3(0, 0, 1), origin, residual: Infinity });
   }
 
-  const normal =
-    outwardAgreement >= 0
-      ? fittedNormal
-      : createVector3(-fittedNormal.x, -fittedNormal.y, -fittedNormal.z);
+  const normal = createVector3(
+    normalX / normalLength,
+    normalY / normalLength,
+    normalZ / normalLength,
+  );
 
   let residual = 0;
   for (const triangleIndex of triangleIndices) {

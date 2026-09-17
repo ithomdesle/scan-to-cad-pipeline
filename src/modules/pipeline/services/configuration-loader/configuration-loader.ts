@@ -149,6 +149,11 @@ export const applyConfigurationFile = (
         base.featureExtraction.maximumCylinderFitResidualFraction,
         "featureExtraction.maximumCylinderFitResidualFraction",
       ),
+      minimumCylinderAngularSpanDegrees: getNumber(
+        featureExtraction.minimumCylinderAngularSpanDegrees,
+        base.featureExtraction.minimumCylinderAngularSpanDegrees,
+        "featureExtraction.minimumCylinderAngularSpanDegrees",
+      ),
     }),
     cadGeneration: Object.freeze({
       isLanguageModelEnabled: getBoolean(

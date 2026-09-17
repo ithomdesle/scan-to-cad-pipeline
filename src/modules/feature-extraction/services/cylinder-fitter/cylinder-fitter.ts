@@ -23,6 +23,7 @@ export type CylinderFit = {
   readonly height: number;
   readonly isConcave: boolean;
   readonly residual: number;
+  readonly angularSpanDegrees: number;
 };
 
 const solveThreeByThree = (
@@ -174,6 +175,7 @@ export const fitCylinder = (
 
   let residual = 0;
   let concaveAgreement = 0;
+  const angles: number[] = [];
 
   for (const triangleIndex of triangleIndices) {
     const centroid = createVector3(
@@ -184,6 +186,7 @@ export const fitCylinder = (
     const radialFirst = dotProduct(centroid, firstBasis) - centreFirst;
     const radialSecond = dotProduct(centroid, secondBasis) - centreSecond;
     residual += Math.abs(Math.hypot(radialFirst, radialSecond) - radius);
+    angles.push(Math.atan2(radialSecond, radialFirst));
 
     const outwardRadial = addVectors(
       scaleVector(firstBasis, radialFirst),
@@ -209,7 +212,24 @@ export const fitCylinder = (
     height: maximumAxial - minimumAxial,
     isConcave: concaveAgreement > 0,
     residual: residual / triangleIndices.length,
+    angularSpanDegrees: getAngularSpanDegrees(angles),
   });
+};
+
+// A real cylindrical face wraps around its axis. A flat or gently curved sheet can always be fitted
+// by some enormous circle, and the only thing that separates the two is how much of the circle the
+// surface actually covers.
+export const getAngularSpanDegrees = (angles: readonly number[]): number => {
+  if (angles.length < 2) return 0;
+
+  const sorted = [...angles].sort((left, right) => left - right);
+  let largestGap = sorted[0] + Math.PI * 2 - sorted[sorted.length - 1];
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    largestGap = Math.max(largestGap, sorted[index] - sorted[index - 1]);
+  }
+
+  return ((Math.PI * 2 - largestGap) * 180) / Math.PI;
 };
 
 export const getCylinderTopPoint = (fit: CylinderFit): Vector3 =>

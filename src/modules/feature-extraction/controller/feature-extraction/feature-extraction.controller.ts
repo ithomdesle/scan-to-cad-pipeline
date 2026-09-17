@@ -22,7 +22,8 @@ export const DEFAULT_FEATURE_EXTRACTION_OPTIONS: FeatureExtractionOptions = Obje
   segmentationAngleToleranceDegrees: 30,
   planarDistanceTolerance: 0.25,
   minimumFaceAreaFraction: 0.01,
-  maximumCylinderFitResidualFraction: 0.08,
+  maximumCylinderFitResidualFraction: 0.005,
+  minimumCylinderAngularSpanDegrees: 45,
 });
 
 // Patches are grown by neighbour-to-neighbour normal continuity so a faceted cylinder survives as
@@ -35,6 +36,11 @@ export const createFeatureExtractionController = () =>
       const statistics = computeMeshStatistics(mesh);
       const boundingBox = computeBoundingBox(mesh);
       const minimumArea = attributes.totalArea * options.minimumFaceAreaFraction;
+      const longestPartDimension = Math.max(
+        boundingBox.maximum.x - boundingBox.minimum.x,
+        boundingBox.maximum.y - boundingBox.minimum.y,
+        boundingBox.maximum.z - boundingBox.minimum.z,
+      );
 
       const segments = growSegments({
         mesh,
@@ -71,10 +77,15 @@ export const createFeatureExtractionController = () =>
         if (!cylinderFit) continue;
         if (
           cylinderFit.residual >
-          cylinderFit.radius * options.maximumCylinderFitResidualFraction
+          longestPartDimension * options.maximumCylinderFitResidualFraction
         ) {
           continue;
         }
+
+        // A fitted circle only describes a real cylindrical face if the surface wraps around it,
+        // and only if that circle could fit inside the part at all.
+        if (cylinderFit.angularSpanDegrees < options.minimumCylinderAngularSpanDegrees) continue;
+        if (cylinderFit.radius * 2 > longestPartDimension * 1.05) continue;
 
         cylindricalFaces.push(
           Object.freeze({
@@ -87,6 +98,7 @@ export const createFeatureExtractionController = () =>
             triangleCount: segment.triangleIndices.length,
             isConcave: cylinderFit.isConcave,
             fitResidual: cylinderFit.residual,
+            angularSpanDegrees: cylinderFit.angularSpanDegrees,
           }),
         );
       }

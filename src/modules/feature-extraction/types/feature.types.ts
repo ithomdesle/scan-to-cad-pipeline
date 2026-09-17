@@ -19,6 +19,7 @@ export type PlanarFace = {
 
 export type CylindricalFace = {
   readonly kind: typeof FeatureKind.CYLINDRICAL_FACE;
+  readonly angularSpanDegrees: number;
   readonly axis: Vector3;
   readonly basePoint: Vector3;
   readonly radius: number;
@@ -58,4 +59,5 @@ export type FeatureExtractionOptions = {
   readonly planarDistanceTolerance: number;
   readonly minimumFaceAreaFraction: number;
   readonly maximumCylinderFitResidualFraction: number;
+  readonly minimumCylinderAngularSpanDegrees: number;
 };

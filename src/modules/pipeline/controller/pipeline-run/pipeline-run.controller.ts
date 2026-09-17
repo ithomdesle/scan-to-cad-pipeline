@@ -8,9 +8,10 @@ import {
 } from "../../../mesh/index.js";
 import {
   createFeatureExtractionController,
-  DEFAULT_PANEL_DETECTION_OPTIONS,
-  extractPanelSet,
-  getIsTurnedPart,
+  DEFAULT_POLYHEDRAL_RECONSTRUCTION_OPTIONS,
+  planReconstruction,
+  reconstructPolyhedron,
+  ReconstructionStrategy,
 } from "../../../feature-extraction/index.js";
 import {
   composePanelSetScript,
@@ -61,18 +62,51 @@ export const createPipelineRunController = (reporter: PipelineReporter) =>
       reporter.onStageStarted(PipelineStage.MODEL, "Building solid model");
       const stepExportController = createStepExportController(configuration.stepExport);
 
-      const panelSet = getIsTurnedPart(specification.features, specification.metadata.surfaceArea)
-        ? null
-        : extractPanelSet(
-            cleaningResult.mesh,
-            configuration.featureExtraction.segmentationAngleToleranceDegrees,
-            DEFAULT_PANEL_DETECTION_OPTIONS,
-          );
+      const plan = planReconstruction(
+        cleaningResult.mesh,
+        specification,
+        configuration.featureExtraction.segmentationAngleToleranceDegrees,
+      );
+      const panelSet = plan.panelSet;
+      reporter.onDetail(`${plan.strategy}: ${plan.reason}`);
 
-      if (panelSet) {
-        reporter.onDetail(
-          `${panelSet.panels.length} panel${panelSet.panels.length === 1 ? "" : "s"}: ${panelSet.panels.map((panel) => `${panel.thicknessInMillimetres.toFixed(2)} mm with ${panel.cutouts.length} cutouts`).join(", ")}`,
+      if (plan.strategy === ReconstructionStrategy.EXACT) {
+        const polyhedron = reconstructPolyhedron(
+          cleaningResult.mesh,
+          DEFAULT_POLYHEDRAL_RECONSTRUCTION_OPTIONS,
         );
+        reporter.onDetail(
+          `${polyhedron.faces.length} faces (${polyhedron.mergedFaceCount} merged, ${polyhedron.triangleFaceCount} tessellated)`,
+        );
+
+        const exactExport = await stepExportController.exportFaces(
+          polyhedron.faces,
+          configuration.outputDirectory,
+        );
+
+        if (!exactExport.isSuccess) {
+          throw new Error(exactExport.error ?? "The mesh could not be rebuilt as a solid.");
+        }
+
+        reporter.onStageStarted(PipelineStage.EXPORT, "Writing STEP");
+        reporter.onDetail(
+          `model source: exact; solid volume ${(exactExport.volume ?? 0).toFixed(2)} mm3 of ${plan.measuredVolume.toFixed(2)} measured`,
+        );
+
+        return Object.freeze({
+          isSuccess: true,
+          artifacts: Object.freeze({
+            cleanedMeshFilePath,
+            specificationFilePath,
+            scriptFilePath: join(configuration.outputDirectory, "faces.json"),
+            stepFilePath: exactExport.stepFilePath as string,
+          }),
+          scriptOrigin: "exact",
+          attemptCount: 0,
+          featureCount: specification.features.length,
+          solidVolume: exactExport.volume ?? 0,
+          appliedSchema: exactExport.appliedSchema ?? configuration.stepExport.schema,
+        });
       }
 
       let lastSuccessfulExport: StepExportResult | null = null;

@@ -1,9 +1,13 @@
 import { join } from "node:path";
 import type { StepExportOptions, StepExportResult } from "../../types/step-export.types.js";
-import { runBuild123dScript } from "../../services/build123d-runner/build123d-runner.js";
+import {
+  runBuild123dFaces,
+  runBuild123dScript,
+} from "../../services/build123d-runner/build123d-runner.js";
 
 export type StepExportController = {
   readonly exportScript: (source: string, outputDirectory: string) => Promise<StepExportResult>;
+  readonly exportFaces: (faces: unknown, outputDirectory: string) => Promise<StepExportResult>;
 };
 
 export const createStepExportController = (options: StepExportOptions): StepExportController =>
@@ -14,6 +18,14 @@ export const createStepExportController = (options: StepExportOptions): StepExpo
       runBuild123dScript(
         source,
         join(outputDirectory, "part.py"),
+        join(outputDirectory, "part.step"),
+        options,
+      ),
+
+    exportFaces: (faces: unknown, outputDirectory: string) =>
+      runBuild123dFaces(
+        faces,
+        join(outputDirectory, "faces.json"),
         join(outputDirectory, "part.step"),
         options,
       ),

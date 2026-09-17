@@ -80,6 +80,54 @@ def export_part(part, output_path, schema_name):
     return occt_schema
 
 
+def build_solid_from_faces(faces_path):
+    """Sew an explicit face list into a solid.
+
+    A designed mesh is exact geometry that has merely been tessellated, so sewing its faces back
+    together reproduces the part exactly, where any primitive description would approximate it.
+    """
+    import json as json_module
+
+    from build123d import Face, Polyline, Shell, Solid, Wire
+
+    with open(faces_path, "r", encoding="utf-8") as faces_file:
+        face_definitions = json_module.load(faces_file)
+
+    faces = []
+    for definition in face_definitions:
+        outer_points = [tuple(point) for point in definition["outer"]]
+        inner_loops = definition.get("inners", [])
+
+        try:
+            outer = Wire(Polyline(*outer_points, close=True))
+            inners = [
+                Wire(Polyline(*[tuple(point) for point in loop], close=True))
+                for loop in inner_loops
+            ]
+            faces.append(Face(outer, inners) if inners else Face(outer))
+            continue
+        except Exception:
+            if inner_loops:
+                raise
+
+        # A merged patch the kernel considers non-planar is split back into triangles, which are
+        # planar by construction; the surface it covers is unchanged.
+        for corner in range(1, len(outer_points) - 1):
+            triangle = [outer_points[0], outer_points[corner], outer_points[corner + 1]]
+            try:
+                faces.append(Face(Wire(Polyline(*triangle, close=True))))
+            except Exception:
+                continue
+
+    shell = Shell(faces)
+    solid = Solid(shell)
+
+    if not solid.is_valid:
+        solid = solid.clean()
+
+    return solid
+
+
 def report(payload):
     sys.stdout.write("\n" + RESULT_MARKER + "\n")
     json.dump(payload, sys.stdout)
@@ -88,7 +136,8 @@ def report(payload):
 
 def main():
     parser = argparse.ArgumentParser(description="Build a build123d model and export it to STEP.")
-    parser.add_argument("--script", required=True)
+    parser.add_argument("--script")
+    parser.add_argument("--faces")
     parser.add_argument("--output", required=True)
     parser.add_argument("--schema", default="ap214")
     arguments = parser.parse_args()
@@ -96,10 +145,16 @@ def main():
     try:
         silence_kernel_logging()
 
-        with open(arguments.script, "r", encoding="utf-8") as script_file:
-            source = script_file.read()
+        if arguments.faces:
+            part = build_solid_from_faces(arguments.faces)
+        else:
+            if not arguments.script:
+                raise ValueError("Either --script or --faces must be given.")
 
-        part = build_part(source)
+            with open(arguments.script, "r", encoding="utf-8") as script_file:
+                source = script_file.read()
+
+            part = build_part(source)
 
         volume = float(getattr(part, "volume", 0.0))
         if volume <= 0.0:

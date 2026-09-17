@@ -30,29 +30,49 @@ const parseRunnerPayload = (standardOutput: string): RunnerPayload | null => {
   }
 };
 
+export const runBuild123dFaces = async (
+  faces: unknown,
+  facesFilePath: string,
+  stepFilePath: string,
+  options: StepExportOptions,
+): Promise<StepExportResult> => {
+  await mkdir(dirname(facesFilePath), { recursive: true });
+  await writeFile(facesFilePath, JSON.stringify(faces), "utf8");
+
+  return runRunner(
+    ["--faces", facesFilePath, "--output", stepFilePath, "--schema", options.schema],
+    stepFilePath,
+    options,
+  );
+};
+
 export const runBuild123dScript = async (
   source: string,
   scriptFilePath: string,
   stepFilePath: string,
   options: StepExportOptions,
 ): Promise<StepExportResult> => {
-  const pythonExecutable = resolvePythonExecutable(options.pythonExecutable);
-
   await mkdir(dirname(scriptFilePath), { recursive: true });
-  await mkdir(dirname(stepFilePath), { recursive: true });
   await writeFile(scriptFilePath, source, "utf8");
+
+  return runRunner(
+    ["--script", scriptFilePath, "--output", stepFilePath, "--schema", options.schema],
+    stepFilePath,
+    options,
+  );
+};
+
+const runRunner = async (
+  runnerArguments: readonly string[],
+  stepFilePath: string,
+  options: StepExportOptions,
+): Promise<StepExportResult> => {
+  const pythonExecutable = resolvePythonExecutable(options.pythonExecutable);
+  await mkdir(dirname(stepFilePath), { recursive: true });
 
   const processResult = await runProcess({
     executable: pythonExecutable,
-    argumentList: [
-      getModelRunnerPath(),
-      "--script",
-      scriptFilePath,
-      "--output",
-      stepFilePath,
-      "--schema",
-      options.schema,
-    ],
+    argumentList: [getModelRunnerPath(), ...runnerArguments],
     timeoutMilliseconds: options.timeoutMilliseconds,
   });
 
