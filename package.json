@@ -1,7 +1,7 @@
 {
   "name": "scan-to-cad-pipeline",
   "version": "2.0.0",
-  "description": "Automated pipeline: 3D scan (STL/OBJ) → feature extraction → build123d model → STEP for Onshape",
+  "description": "Automated pipeline: 3D scan (STL/OBJ) \u2192 feature extraction \u2192 build123d model \u2192 STEP for Onshape",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
@@ -17,7 +17,10 @@
     "format": "prettier --write src",
     "lint": "eslint src",
     "setup:python": "bash scripts/setup-python-environment.sh",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "build:web": "cd web && npx tsc -b && npx vite build",
+    "build:all": "npm run build && npm run build:web",
+    "serve": "node dist/server.js"
   },
   "keywords": [
     "cad",
@@ -30,8 +33,12 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@fastify/multipart": "^10.1.1",
+    "@fastify/static": "^10.1.3",
     "commander": "^12.1.0",
-    "meshoptimizer": "^0.21.0"
+    "fastify": "^5.12.5",
+    "meshoptimizer": "^0.21.0",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.12.0",

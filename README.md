@@ -93,6 +93,30 @@ The deterministic path reconstructs a 40 x 8 mm washer with a 12 mm bore at 9148
 - **A parametric feature tree.** Onshape receives an editable solid, not a history of modelling operations. That is a limit of STEP, not of this pipeline.
 - **Freeform surfaces.** Only planes and cylinders are fitted. Spheres, cones, tori and splines fall back to the bounding shape.
 
+## Phone app
+
+The pipeline also runs as a mobile web app, so a part goes from your hand to a STEP file without a terminal.
+
+```bash
+pnpm install
+pnpm setup:python
+pnpm build:all
+pnpm serve
+```
+
+Open `http://<this-machine-ip>:4000` on your phone, on the same network. No HTTPS or certificate is needed: capture uses a file input rather than a live camera stream, so iOS opens the camera over plain HTTP.
+
+**Photo mode** — for flat, constant-thickness parts. Lay the part on a contrasting surface, shoot straight down, type its longest edge and its thickness from calipers, and tap *Create STEP*. The outline and every interior cutout are traced, scaled by the edge you measured, and extruded. A 180 x 84 x 1.5 mm plate with three 32 x 20 mm slots comes back at exactly 19800 mm3.
+
+This is the accurate route for sheet metal: a silhouette plus two caliper readings beats photogrammetry of bare, shiny material, and it recovers the rectangular slots that the 3D feature fitter cannot see.
+
+**3D scan mode** — upload an STL or OBJ from Scaniverse or RealityScan and it runs the full mesh pipeline: clean, fit planes and cylinders, detect holes, export.
+
+| Mode | Good for | Not for |
+| --- | --- | --- |
+| Photo | Flat plates, brackets, gaskets, panels — anything of constant thickness | Bends, flanges, anything genuinely 3D |
+| 3D scan | Rounded and prismatic solids with planar and cylindrical faces | Rectangular slots; unmatted shiny metal |
+
 ## Development
 
 ```bash

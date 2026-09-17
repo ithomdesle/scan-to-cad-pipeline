@@ -45,3 +45,8 @@ features.json
 
 # Except test files
 !test-cube.stl
+
+# Web build + job artifacts
+web/dist/
+web/node_modules/
+output/
