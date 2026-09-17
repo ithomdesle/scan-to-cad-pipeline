@@ -1,7 +1,3 @@
-/**
- * Generate OpenSCAD code from feature spec using LM Studio LLM
- */
-
 import type { FeatureSpec, PipelineConfig } from './types.js';
 
 export async function generateOpenSCAD(
@@ -13,12 +9,10 @@ export async function generateOpenSCAD(
     throw new Error('LM_API_KEY environment variable not set');
   }
 
-  // Build prompt for LLM
   const prompt = buildOpenSCADPrompt(featureSpec);
 
   console.log(`   Calling LM Studio at ${config.lmStudioEndpoint}...`);
 
-  // Call LM Studio API (OpenAI-compatible)
   const response = await fetch(`${config.lmStudioEndpoint}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -61,13 +55,11 @@ export async function generateOpenSCAD(
 
   let openscadCode = data.choices[0].message.content;
 
-  // Extract code from markdown code blocks if present
   const codeBlockMatch = openscadCode.match(/```(?:openscad)?\n([\s\S]*?)\n```/);
   if (codeBlockMatch) {
     openscadCode = codeBlockMatch[1];
   }
 
-  // Validate basic syntax
   if (!openscadCode.includes('cube') && !openscadCode.includes('cylinder') && !openscadCode.includes('sphere')) {
     console.warn('   ⚠️  Generated code may not contain valid primitives');
   }

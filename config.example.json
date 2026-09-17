@@ -4,7 +4,7 @@
   "aiPcPort": 22,
   "targetFaceCount": 100000,
   "removeSmallComponentsThreshold": 0.01,
-  "fillHoles": true,
+  "isFillHoles": true,
   "ransacIterations": 1000,
   "ransacThreshold": 0.01,
   "minPlaneInliers": 100,

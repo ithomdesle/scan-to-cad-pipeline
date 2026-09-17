@@ -1,7 +1,3 @@
-/**
- * Export STEP file from OpenSCAD code using openscad binary
- */
-
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { access } from 'fs/promises';
@@ -11,7 +7,6 @@ export async function exportSTEP(
   openscadPath: string,
   config: PipelineConfig
 ): Promise<string> {
-  // Verify OpenSCAD file exists
   try {
     await access(openscadPath);
   } catch {
@@ -50,7 +45,6 @@ export async function exportSTEP(
         return;
       }
 
-      // Verify STEP file was created
       try {
         await access(stepPath);
         resolve(stepPath);

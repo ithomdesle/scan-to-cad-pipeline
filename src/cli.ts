@@ -1,10 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * CLI entry point for scan-to-CAD pipeline
- * One command in, one STEP file out
- */
-
 import { Command } from 'commander';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { resolve, dirname } from 'path';
@@ -33,13 +28,11 @@ program
     try {
       console.log('🚀 Scan-to-CAD Pipeline starting...\n');
 
-      // Load config
       let config: PipelineConfig;
       if (options.config) {
         const configData = await readFile(options.config, 'utf-8');
         config = JSON.parse(configData);
       } else {
-        // Default config
         config = {
           captureMode: input === 'capture' ? 'meshroom' : 'file',
           aiPcHost: options.aiPc,
@@ -47,7 +40,7 @@ program
           inputMeshPath: input === 'capture' ? undefined : resolve(input),
           targetFaceCount: parseInt(options.targetFaces, 10),
           removeSmallComponentsThreshold: 0.01,
-          fillHoles: true,
+          isFillHoles: true,
           ransacIterations: 1000,
           ransacThreshold: 0.01,
           minPlaneInliers: 100,
@@ -63,31 +56,28 @@ program
       }
 
       const result: PipelineResult = {
-        success: false,
+        isSuccess: false,
         stages: {
-          capture: false,
-          clean: false,
-          features: false,
-          generate: false,
-          export: false,
+          isCapture: false,
+          isClean: false,
+          isFeatures: false,
+          isGenerate: false,
+          isExport: false,
         },
       };
 
-      // Stage 1: Capture or load mesh
       console.log('📷 Stage 1: Capture/Load');
       const meshPath = await captureMesh(config);
       console.log(`   ✓ Mesh: ${meshPath}\n`);
-      result.stages.capture = true;
+      result.stages.isCapture = true;
 
-      // Stage 2: Clean mesh
       console.log('🧹 Stage 2: Clean mesh');
       const cleanedPath = await cleanMesh(meshPath, config);
       console.log(`   ✓ Cleaned: ${cleanedPath}`);
       console.log(`   ✓ Target: ${config.targetFaceCount} faces\n`);
       result.cleanedMeshFile = cleanedPath;
-      result.stages.clean = true;
+      result.stages.isClean = true;
 
-      // Stage 3: Extract features
       console.log('🔍 Stage 3: Feature extraction');
       const featureSpec = await extractFeatures(cleanedPath, config);
       const featuresPath = resolve(config.outputDir, 'features.json');
@@ -97,9 +87,8 @@ program
       console.log(`   ✓ Dimensions: ${featureSpec.dimensions.length.toFixed(1)}×${featureSpec.dimensions.width.toFixed(1)}×${featureSpec.dimensions.height.toFixed(1)} mm`);
       console.log(`   ✓ Saved: ${featuresPath}\n`);
       result.featuresFile = featuresPath;
-      result.stages.features = true;
+      result.stages.isFeatures = true;
 
-      // Stage 4: Generate OpenSCAD
       console.log('🤖 Stage 4: LLM → OpenSCAD');
       const openscadCode = await generateOpenSCAD(featureSpec, config);
       const openscadPath = resolve(config.outputDir, 'part.scad');
@@ -108,17 +97,16 @@ program
       console.log(`   ✓ Generated: ${openscadPath}`);
       console.log(`   ✓ Model: ${config.lmStudioModel}\n`);
       result.openscadFile = openscadPath;
-      result.stages.generate = true;
+      result.stages.isGenerate = true;
 
-      // Stage 5: Export STEP
       console.log('📦 Stage 5: OpenSCAD → STEP');
       const stepPath = await exportSTEP(openscadPath, config);
       console.log(`   ✓ STEP file: ${stepPath}`);
       console.log(`   ✓ Format: ${config.stepFormat}\n`);
       result.stepFile = stepPath;
-      result.stages.export = true;
+      result.stages.isExport = true;
 
-      result.success = true;
+      result.isSuccess = true;
 
       console.log('✅ Pipeline complete!');
       console.log(`\n📄 Output: ${stepPath}`);

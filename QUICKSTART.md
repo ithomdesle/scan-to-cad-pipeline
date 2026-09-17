@@ -98,7 +98,6 @@ Check `output/features.json`:
 ### Stage 3: OpenSCAD Generation
 Check `output/part.scad`:
 ```openscad
-// Should contain cube/cylinder primitives
 difference() {
   cube([50, 30, 10], center=true);
   cylinder(h=11, r=5, center=true);
@@ -140,7 +139,7 @@ echo $LM_API_KEY
 # Try manual API call
 curl -X POST http://192.168.1.144:1001/lmstudio/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $LM_API_KEY" \
+  -H "Authorization: Bearer ***" \
   -d '{"model":"local-model","messages":[{"role":"user","content":"test"}]}'
 ```
 

@@ -1,8 +1,3 @@
-/**
- * Feature extraction: RANSAC-based plane/cylinder/hole detection
- * Outputs dimensions and geometry for LLM consumption
- */
-
 import { readFile } from 'fs/promises';
 import type { MeshData, FeatureSpec, Feature, Plane, Cylinder, Hole, Vec3 } from './types.js';
 import { extname } from 'path';
@@ -12,7 +7,6 @@ export async function extractFeatures(
   meshPath: string,
   config: PipelineConfig
 ): Promise<FeatureSpec> {
-  // Load mesh
   const ext = extname(meshPath).toLowerCase();
   let meshData: MeshData;
 
@@ -24,7 +18,6 @@ export async function extractFeatures(
 
   const features: Feature[] = [];
 
-  // Extract bounding box and dimensions
   const bbox = computeBoundingBox(meshData);
   const dimensions = {
     length: bbox.max.x - bbox.min.x,
@@ -34,17 +27,14 @@ export async function extractFeatures(
 
   console.log(`   Bounding box: [${bbox.min.x.toFixed(2)}, ${bbox.min.y.toFixed(2)}, ${bbox.min.z.toFixed(2)}] to [${bbox.max.x.toFixed(2)}, ${bbox.max.y.toFixed(2)}, ${bbox.max.z.toFixed(2)}]`);
 
-  // RANSAC plane fitting
   const planes = await extractPlanes(meshData, config);
   features.push(...planes);
   console.log(`   Found ${planes.length} planes`);
 
-  // RANSAC cylinder fitting
   const cylinders = await extractCylinders(meshData, config);
   features.push(...cylinders);
   console.log(`   Found ${cylinders.length} cylinders`);
 
-  // Hole detection (circular features)
   const holes = await extractHoles(meshData, config);
   features.push(...holes);
   console.log(`   Found ${holes.length} holes`);
@@ -80,7 +70,7 @@ function parseBinarySTL(buffer: Buffer): MeshData {
   
   let offset = 84;
   for (let i = 0; i < triangleCount; i++) {
-    offset += 12; // Skip normal
+    offset += 12;
     
     for (let j = 0; j < 3; j++) {
       const x = buffer.readFloatLE(offset);
@@ -138,15 +128,13 @@ async function extractPlanes(mesh: MeshData, config: PipelineConfig): Promise<Pl
   const planes: Plane[] = [];
   const used = new Set<number>();
   
-  // Run RANSAC multiple times to find dominant planes
-  for (let iter = 0; iter < 6; iter++) { // Try to find up to 6 planes (typical box has 6 faces)
+  for (let iter = 0; iter < 6; iter++) {
     if (used.size >= mesh.triangleCount * 0.9) break;
     
     const plane = ransacPlane(mesh, config, used);
     if (plane && plane.inliers >= config.minPlaneInliers) {
       planes.push(plane);
       
-      // Mark inliers as used
       const inlierIndices = getPlaneInliers(mesh, plane, config.ransacThreshold, used);
       for (const idx of inlierIndices) {
         used.add(idx);
@@ -159,6 +147,70 @@ async function extractPlanes(mesh: MeshData, config: PipelineConfig): Promise<Pl
   return planes;
 }
 
+function sampleThreeRandomPoints(
+  mesh: MeshData,
+  used: Set<number>
+): Vec3[] | null {
+  const samples: Vec3[] = [];
+  const maxAttempts = 100;
+  let attempts = 0;
+  
+  while (samples.length < 3 && attempts < maxAttempts) {
+    const triIdx = Math.floor(Math.random() * mesh.triangleCount);
+    if (used.has(triIdx)) {
+      attempts++;
+      continue;
+    }
+    
+    const vertIdx = mesh.indices[triIdx * 3] * 3;
+    samples.push({
+      x: mesh.vertices[vertIdx],
+      y: mesh.vertices[vertIdx + 1],
+      z: mesh.vertices[vertIdx + 2],
+    });
+    attempts++;
+  }
+  
+  return samples.length < 3 ? null : samples;
+}
+
+function computePlaneNormalFromPoints(samples: Vec3[]): Vec3 | null {
+  const v1 = subtract(samples[1], samples[0]);
+  const v2 = subtract(samples[2], samples[0]);
+  const normal = normalize(cross(v1, v2));
+  
+  if (isNaN(normal.x) || isNaN(normal.y) || isNaN(normal.z)) return null;
+  
+  return normal;
+}
+
+function countPlaneInliers(
+  mesh: MeshData,
+  planePoint: Vec3,
+  normal: Vec3,
+  threshold: number,
+  used: Set<number>
+): number {
+  let inliers = 0;
+  for (let j = 0; j < mesh.triangleCount; j++) {
+    if (used.has(j)) continue;
+    
+    const vertIdx = mesh.indices[j * 3] * 3;
+    const point = {
+      x: mesh.vertices[vertIdx],
+      y: mesh.vertices[vertIdx + 1],
+      z: mesh.vertices[vertIdx + 2],
+    };
+    
+    const dist = Math.abs(dot(subtract(point, planePoint), normal));
+    if (dist < threshold) {
+      inliers++;
+    }
+  }
+  
+  return inliers;
+}
+
 function ransacPlane(
   mesh: MeshData,
   config: PipelineConfig,
@@ -168,53 +220,13 @@ function ransacPlane(
   let bestInliers = 0;
   
   for (let i = 0; i < config.ransacIterations; i++) {
-    // Sample 3 random points not in 'used'
-    const samples: Vec3[] = [];
-    const maxAttempts = 100;
-    let attempts = 0;
+    const samples = sampleThreeRandomPoints(mesh, used);
+    if (!samples) continue;
     
-    while (samples.length < 3 && attempts < maxAttempts) {
-      const triIdx = Math.floor(Math.random() * mesh.triangleCount);
-      if (used.has(triIdx)) {
-        attempts++;
-        continue;
-      }
-      
-      const vertIdx = mesh.indices[triIdx * 3] * 3;
-      samples.push({
-        x: mesh.vertices[vertIdx],
-        y: mesh.vertices[vertIdx + 1],
-        z: mesh.vertices[vertIdx + 2],
-      });
-      attempts++;
-    }
+    const normal = computePlaneNormalFromPoints(samples);
+    if (!normal) continue;
     
-    if (samples.length < 3) continue;
-    
-    // Compute plane from 3 points
-    const v1 = subtract(samples[1], samples[0]);
-    const v2 = subtract(samples[2], samples[0]);
-    const normal = normalize(cross(v1, v2));
-    
-    if (isNaN(normal.x) || isNaN(normal.y) || isNaN(normal.z)) continue;
-    
-    // Count inliers
-    let inliers = 0;
-    for (let j = 0; j < mesh.triangleCount; j++) {
-      if (used.has(j)) continue;
-      
-      const vertIdx = mesh.indices[j * 3] * 3;
-      const point = {
-        x: mesh.vertices[vertIdx],
-        y: mesh.vertices[vertIdx + 1],
-        z: mesh.vertices[vertIdx + 2],
-      };
-      
-      const dist = Math.abs(dot(subtract(point, samples[0]), normal));
-      if (dist < config.ransacThreshold) {
-        inliers++;
-      }
-    }
+    const inliers = countPlaneInliers(mesh, samples[0], normal, config.ransacThreshold, used);
     
     if (inliers > bestInliers) {
       bestInliers = inliers;
@@ -222,7 +234,7 @@ function ransacPlane(
         type: 'plane',
         normal,
         point: samples[0],
-        area: 0, // Will compute later
+        area: 0,
         inliers,
       };
     }
@@ -262,8 +274,7 @@ async function extractCylinders(mesh: MeshData, config: PipelineConfig): Promise
   const cylinders: Cylinder[] = [];
   const used = new Set<number>();
   
-  // Run RANSAC to find cylinders
-  for (let iter = 0; iter < 4; iter++) { // Try to find up to 4 cylinders
+  for (let iter = 0; iter < 4; iter++) {
     if (used.size >= mesh.triangleCount * 0.8) break;
     
     const cylinder = ransacCylinder(mesh, config, used);
@@ -282,6 +293,64 @@ async function extractCylinders(mesh: MeshData, config: PipelineConfig): Promise
   return cylinders;
 }
 
+function estimateCylinderRadius(
+  mesh: MeshData,
+  center: Vec3,
+  axis: Vec3,
+  used: Set<number>
+): number {
+  let radius = 0;
+  let count = 0;
+  for (let j = 0; j < Math.min(100, mesh.triangleCount); j++) {
+    const idx = Math.floor(Math.random() * mesh.triangleCount);
+    if (used.has(idx)) continue;
+    
+    const vIdx = mesh.indices[idx * 3] * 3;
+    const p = {
+      x: mesh.vertices[vIdx],
+      y: mesh.vertices[vIdx + 1],
+      z: mesh.vertices[vIdx + 2],
+    };
+    
+    const proj = projectOntoPlane(p, center, axis);
+    const dist = distance(p, proj);
+    radius += dist;
+    count++;
+  }
+  
+  return count === 0 ? 0 : radius / count;
+}
+
+function countCylinderInliers(
+  mesh: MeshData,
+  center: Vec3,
+  axis: Vec3,
+  radius: number,
+  threshold: number,
+  used: Set<number>
+): number {
+  let inliers = 0;
+  for (let j = 0; j < mesh.triangleCount; j++) {
+    if (used.has(j)) continue;
+    
+    const vIdx = mesh.indices[j * 3] * 3;
+    const p = {
+      x: mesh.vertices[vIdx],
+      y: mesh.vertices[vIdx + 1],
+      z: mesh.vertices[vIdx + 2],
+    };
+    
+    const proj = projectOntoPlane(p, center, axis);
+    const dist = Math.abs(distance(p, proj) - radius);
+    
+    if (dist < threshold) {
+      inliers++;
+    }
+  }
+  
+  return inliers;
+}
+
 function ransacCylinder(
   mesh: MeshData,
   config: PipelineConfig,
@@ -290,7 +359,6 @@ function ransacCylinder(
   let bestCylinder: Cylinder | null = null;
   let bestInliers = 0;
   
-  // Simplified cylinder fitting: assume axis-aligned cylinders for now
   const axes: Vec3[] = [
     { x: 1, y: 0, z: 0 },
     { x: 0, y: 1, z: 0 },
@@ -299,7 +367,6 @@ function ransacCylinder(
   
   for (const axis of axes) {
     for (let i = 0; i < config.ransacIterations / 3; i++) {
-      // Sample random point
       const triIdx = Math.floor(Math.random() * mesh.triangleCount);
       if (used.has(triIdx)) continue;
       
@@ -310,53 +377,12 @@ function ransacCylinder(
         z: mesh.vertices[vertIdx + 2],
       };
       
-      // Compute center on perpendicular plane
       const center = projectOntoPlane(point, { x: 0, y: 0, z: 0 }, axis);
+      const radius = estimateCylinderRadius(mesh, center, axis, used);
       
-      // Estimate radius from nearby points
-      let radius = 0;
-      let count = 0;
-      for (let j = 0; j < Math.min(100, mesh.triangleCount); j++) {
-        const idx = Math.floor(Math.random() * mesh.triangleCount);
-        if (used.has(idx)) continue;
-        
-        const vIdx = mesh.indices[idx * 3] * 3;
-        const p = {
-          x: mesh.vertices[vIdx],
-          y: mesh.vertices[vIdx + 1],
-          z: mesh.vertices[vIdx + 2],
-        };
-        
-        const proj = projectOntoPlane(p, center, axis);
-        const dist = distance(p, proj);
-        radius += dist;
-        count++;
-      }
+      if (radius < 0.1) continue;
       
-      if (count === 0) continue;
-      radius /= count;
-      
-      if (radius < 0.1) continue; // Too small
-      
-      // Count inliers
-      let inliers = 0;
-      for (let j = 0; j < mesh.triangleCount; j++) {
-        if (used.has(j)) continue;
-        
-        const vIdx = mesh.indices[j * 3] * 3;
-        const p = {
-          x: mesh.vertices[vIdx],
-          y: mesh.vertices[vIdx + 1],
-          z: mesh.vertices[vIdx + 2],
-        };
-        
-        const proj = projectOntoPlane(p, center, axis);
-        const dist = Math.abs(distance(p, proj) - radius);
-        
-        if (dist < config.ransacThreshold) {
-          inliers++;
-        }
-      }
+      const inliers = countCylinderInliers(mesh, center, axis, radius, config.ransacThreshold, used);
       
       if (inliers > bestInliers && inliers >= config.minCylinderInliers) {
         bestInliers = inliers;
@@ -365,7 +391,7 @@ function ransacCylinder(
           axis,
           center,
           radius,
-          height: 0, // Will estimate later
+          height: 0,
           inliers,
         };
       }
@@ -405,12 +431,9 @@ function getCylinderInliers(
 }
 
 async function extractHoles(_mesh: MeshData, _config: PipelineConfig): Promise<Hole[]> {
-  // Simplified hole detection: look for circular boundary edges
-  // For now, return empty array - holes are complex to detect
   return [];
 }
 
-// Vector math utilities
 function subtract(a: Vec3, b: Vec3): Vec3 {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
 }

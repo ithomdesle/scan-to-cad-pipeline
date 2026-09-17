@@ -1,7 +1,3 @@
-/**
- * Shared TypeScript types for the scan-to-CAD pipeline
- */
-
 export interface Vec3 {
   x: number;
   y: number;
@@ -68,48 +64,43 @@ export interface FeatureSpec {
 }
 
 export interface PipelineConfig {
-  // Capture settings
   captureMode: 'meshroom' | 'realityscan' | 'file';
   aiPcHost: string;
   aiPcPort: number;
   inputMeshPath?: string;
 
-  // Cleaning settings
   targetFaceCount: number;
   removeSmallComponentsThreshold: number;
-  fillHoles: boolean;
+  isFillHoles: boolean;
 
-  // Feature extraction settings
   ransacIterations: number;
   ransacThreshold: number;
   minPlaneInliers: number;
   minCylinderInliers: number;
 
-  // LLM settings
   lmStudioEndpoint: string;
   lmStudioModel: string;
   llmTemperature: number;
   llmMaxTokens: number;
 
-  // Export settings
   openscadBinary: string;
   stepFormat: 'AP214' | 'AP242';
   outputDir: string;
 }
 
 export interface PipelineResult {
-  success: boolean;
+  isSuccess: boolean;
   stepFile?: string;
   openscadFile?: string;
   featuresFile?: string;
   cleanedMeshFile?: string;
   error?: string;
   stages: {
-    capture: boolean;
-    clean: boolean;
-    features: boolean;
-    generate: boolean;
-    export: boolean;
+    isCapture: boolean;
+    isClean: boolean;
+    isFeatures: boolean;
+    isGenerate: boolean;
+    isExport: boolean;
   };
 }
 
