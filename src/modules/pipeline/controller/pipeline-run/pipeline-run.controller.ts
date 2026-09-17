@@ -8,11 +8,12 @@ import {
 } from "../../../mesh/index.js";
 import {
   createFeatureExtractionController,
-  DEFAULT_PLATE_DETECTION_OPTIONS,
-  extractPlateProfile,
+  DEFAULT_PANEL_DETECTION_OPTIONS,
+  extractPanelSet,
+  getIsTurnedPart,
 } from "../../../feature-extraction/index.js";
 import {
-  composePlateScript,
+  composePanelSetScript,
   createCadScriptGenerationController,
 } from "../../../cad-generation/index.js";
 import { createStepExportController, type StepExportResult } from "../../../step-export/index.js";
@@ -60,15 +61,17 @@ export const createPipelineRunController = (reporter: PipelineReporter) =>
       reporter.onStageStarted(PipelineStage.MODEL, "Building solid model");
       const stepExportController = createStepExportController(configuration.stepExport);
 
-      const plateProfile = extractPlateProfile(
-        cleaningResult.mesh,
-        configuration.featureExtraction.segmentationAngleToleranceDegrees,
-        DEFAULT_PLATE_DETECTION_OPTIONS,
-      );
+      const panelSet = getIsTurnedPart(specification.features, specification.metadata.surfaceArea)
+        ? null
+        : extractPanelSet(
+            cleaningResult.mesh,
+            configuration.featureExtraction.segmentationAngleToleranceDegrees,
+            DEFAULT_PANEL_DETECTION_OPTIONS,
+          );
 
-      if (plateProfile) {
+      if (panelSet) {
         reporter.onDetail(
-          `plate ${plateProfile.thicknessInMillimetres.toFixed(2)} mm thick, outline with ${plateProfile.outline.length} corners, ${plateProfile.cutouts.length} cutouts`,
+          `${panelSet.panels.length} panel${panelSet.panels.length === 1 ? "" : "s"}: ${panelSet.panels.map((panel) => `${panel.thicknessInMillimetres.toFixed(2)} mm with ${panel.cutouts.length} cutouts`).join(", ")}`,
         );
       }
 
@@ -89,11 +92,11 @@ export const createPipelineRunController = (reporter: PipelineReporter) =>
         specification,
         {
           ...configuration.cadGeneration,
-          isLanguageModelEnabled: plateProfile
+          isLanguageModelEnabled: panelSet
             ? false
             : configuration.cadGeneration.isLanguageModelEnabled,
         },
-        plateProfile ? composePlateScript(plateProfile) : undefined,
+        panelSet ? composePanelSetScript(panelSet) : undefined,
       );
 
       const acceptedExport = lastSuccessfulExport as StepExportResult | null;

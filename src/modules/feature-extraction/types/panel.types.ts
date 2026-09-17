@@ -5,7 +5,7 @@ export type Point2 = {
   readonly y: number;
 };
 
-export type PlateProfile = {
+export type Panel = {
   readonly outline: readonly Point2[];
   readonly cutouts: readonly (readonly Point2[])[];
   readonly thicknessInMillimetres: number;
@@ -15,8 +15,17 @@ export type PlateProfile = {
   readonly faceArea: number;
 };
 
-export type PlateDetectionOptions = {
-  readonly minimumFaceAreaShare: number;
+export type PanelSet = {
+  readonly panels: readonly Panel[];
+  readonly estimatedWallThickness: number;
+  readonly coveredAreaShare: number;
+};
+
+export type PanelDetectionOptions = {
   readonly parallelNormalTolerance: number;
+  readonly minimumPanelAreaFraction: number;
+  readonly wallThicknessLowerFactor: number;
+  readonly wallThicknessUpperFactor: number;
   readonly boundarySimplificationTolerance: number;
+  readonly minimumCoveredAreaShare: number;
 };

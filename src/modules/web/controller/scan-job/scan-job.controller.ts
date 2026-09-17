@@ -9,13 +9,15 @@ import {
 import {
   createFeatureExtractionController,
   DEFAULT_FEATURE_EXTRACTION_OPTIONS,
-  DEFAULT_PLATE_DETECTION_OPTIONS,
-  extractPlateProfile,
+  DEFAULT_PANEL_DETECTION_OPTIONS,
+  extractPanelSet,
+  getIsTurnedPart,
   FeatureKind,
+  computeMeshVolume,
 } from "../../../feature-extraction/index.js";
 import {
   composeBuild123dScript,
-  composePlateScript,
+  composePanelSetScript,
   composeProfileScript,
 } from "../../../cad-generation/index.js";
 import {
@@ -118,16 +120,18 @@ export const createScanJobController = (jobStore: JobStore) =>
 
         // A plate is reconstructed from its own outline and cutouts; a bounding box would throw
         // both away, and the cutout walls are too small to survive a face-area threshold.
-        const plateProfile = extractPlateProfile(
-          cleaningResult.mesh,
-          DEFAULT_FEATURE_EXTRACTION_OPTIONS.segmentationAngleToleranceDegrees,
-          DEFAULT_PLATE_DETECTION_OPTIONS,
-        );
-
         const specification = createFeatureExtractionController().extract(
           cleaningResult.mesh,
           DEFAULT_FEATURE_EXTRACTION_OPTIONS,
         );
+
+        const panelSet = getIsTurnedPart(specification.features, specification.metadata.surfaceArea)
+          ? null
+          : extractPanelSet(
+              cleaningResult.mesh,
+              DEFAULT_FEATURE_EXTRACTION_OPTIONS.segmentationAngleToleranceDegrees,
+              DEFAULT_PANEL_DETECTION_OPTIONS,
+            );
         await writeFile(
           join(job.outputDirectory, "features.json"),
           `${JSON.stringify(specification, null, 2)}\n`,
@@ -136,7 +140,7 @@ export const createScanJobController = (jobStore: JobStore) =>
 
         jobStore.update(jobId, { progressMessage: "Building the solid" });
         const exportResult = await stepExportController.exportScript(
-          plateProfile ? composePlateScript(plateProfile) : composeBuild123dScript(specification),
+          panelSet ? composePanelSetScript(panelSet) : composeBuild123dScript(specification),
           job.outputDirectory,
         );
 
@@ -145,6 +149,7 @@ export const createScanJobController = (jobStore: JobStore) =>
         }
 
         const statistics = computeMeshStatistics(cleaningResult.mesh);
+        const measuredVolume = computeMeshVolume(cleaningResult.mesh);
         const holeCount = specification.features.filter(
           (feature) => feature.kind === FeatureKind.HOLE,
         ).length;
@@ -162,15 +167,19 @@ export const createScanJobController = (jobStore: JobStore) =>
             widthInMillimetres: specification.dimensions.length,
             heightInMillimetres: specification.dimensions.width,
             thicknessInMillimetres: specification.dimensions.height,
-            cutoutCount: plateProfile ? plateProfile.cutouts.length : holeCount,
+            cutoutCount: panelSet
+              ? panelSet.panels.reduce((total, panel) => total + panel.cutouts.length, 0)
+              : holeCount,
             outlinePointCount: specification.features.length,
             volumeInCubicMillimetres: exportResult.volume ?? 0,
           }),
-          featureSummary: plateProfile
+          featureSummary: panelSet
             ? Object.freeze([
-                `Plate ${plateProfile.thicknessInMillimetres.toFixed(2)} mm thick`,
-                `Outline with ${plateProfile.outline.length} corners`,
-                `${plateProfile.cutouts.length} cutout${plateProfile.cutouts.length === 1 ? "" : "s"}`,
+                panelSet.panels.length === 1
+                  ? `Plate ${panelSet.panels[0].thicknessInMillimetres.toFixed(2)} mm thick`
+                  : `${panelSet.panels.length} panels, ${panelSet.panels.map((panel) => `${panel.thicknessInMillimetres.toFixed(1)} mm`).join(" + ")}`,
+                `${panelSet.panels.reduce((total, panel) => total + panel.cutouts.length, 0)} cutout${panelSet.panels.reduce((total, panel) => total + panel.cutouts.length, 0) === 1 ? "" : "s"}`,
+                `${(100 * (exportResult.volume ?? 0)) / measuredVolume < 0 ? "" : ""}${Math.round((100 * (exportResult.volume ?? 0)) / measuredVolume)}% of the scanned volume`,
                 `${statistics.triangleCount} triangles, ${statistics.isWatertight ? "watertight" : "open mesh"}`,
               ])
             : Object.freeze([
