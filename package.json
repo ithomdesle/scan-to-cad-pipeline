@@ -1,0 +1,37 @@
+{
+  "name": "scan-to-cad-pipeline",
+  "version": "1.0.0",
+  "description": "Automated pipeline: 3D scan (STL/OBJ) → feature extraction → LLM-generated OpenSCAD → STEP for Onshape",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "scan2cad": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "cad",
+    "step",
+    "onshape",
+    "photogrammetry",
+    "openscad",
+    "3d-scanning"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "meshoptimizer": "^0.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

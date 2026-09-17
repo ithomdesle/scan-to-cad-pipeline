@@ -1,0 +1,19 @@
+{
+  "captureMode": "file",
+  "aiPcHost": "192.168.1.29",
+  "aiPcPort": 22,
+  "targetFaceCount": 100000,
+  "removeSmallComponentsThreshold": 0.01,
+  "fillHoles": true,
+  "ransacIterations": 1000,
+  "ransacThreshold": 0.01,
+  "minPlaneInliers": 100,
+  "minCylinderInliers": 50,
+  "lmStudioEndpoint": "http://192.168.1.144:1001/lmstudio/v1",
+  "lmStudioModel": "local-model",
+  "llmTemperature": 0.2,
+  "llmMaxTokens": 2000,
+  "openscadBinary": "openscad",
+  "stepFormat": "AP214",
+  "outputDir": "./output"
+}
