@@ -22,6 +22,7 @@ export type ProfileExtractionOptions = {
   readonly thicknessInMillimetres: number;
   readonly simplificationTolerance: number;
   readonly minimumCutoutAreaFraction: number;
+  readonly minimumCutoutIntensityMatch: number;
 };
 
 export type BinaryImage = {

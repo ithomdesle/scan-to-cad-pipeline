@@ -17,6 +17,7 @@ export const DEFAULT_PROFILE_EXTRACTION_OPTIONS: ProfileExtractionOptions = Obje
   thicknessInMillimetres: 2,
   simplificationTolerance: 2,
   minimumCutoutAreaFraction: 0.0005,
+  minimumCutoutIntensityMatch: 25,
 });
 
 const MAXIMUM_ANALYSIS_WIDTH = 1400;
@@ -32,6 +33,44 @@ export const decodeImageToGreyscale = async (
     .toBuffer({ resolveWithObject: true });
 
   return { greyscale: new Uint8Array(data), width: info.width, height: info.height };
+};
+
+const measureBorderIntensity = (
+  greyscale: Uint8Array,
+  width: number,
+  height: number,
+): { readonly mean: number; readonly deviation: number } => {
+  const samples: number[] = [];
+
+  for (let column = 0; column < width; column += 1) {
+    samples.push(greyscale[column], greyscale[(height - 1) * width + column]);
+  }
+  for (let row = 0; row < height; row += 1) {
+    samples.push(greyscale[row * width], greyscale[row * width + width - 1]);
+  }
+
+  const mean = samples.reduce((total, value) => total + value, 0) / samples.length;
+  const variance =
+    samples.reduce((total, value) => total + (value - mean) ** 2, 0) / samples.length;
+
+  return { mean, deviation: Math.sqrt(variance) };
+};
+
+const measureRegionIntensity = (
+  greyscale: Uint8Array,
+  labels: Int32Array,
+  label: number,
+): number => {
+  let total = 0;
+  let count = 0;
+
+  for (let index = 0; index < labels.length; index += 1) {
+    if (labels[index] !== label) continue;
+    total += greyscale[index];
+    count += 1;
+  }
+
+  return count === 0 ? 0 : total / count;
 };
 
 const getBoundingBox = (points: readonly Point2[]) => {
@@ -63,6 +102,14 @@ export const createProfileExtractionController = () =>
         );
       }
 
+      // A silhouette that runs off the edge of the frame is not the outline of the part: whatever
+      // continues past the border is unknown, and anything touching the part is traced with it.
+      if (partRegions.isRegionTouchingBorder[partLabel]) {
+        throw new Error(
+          "The part runs off the edge of the photo, or something touching it does. Lay the part on its own, fully inside the frame, and shoot straight down.",
+        );
+      }
+
       const outlineContour = traceRegionBoundary(partRegions.labels, width, height, partLabel);
       if (outlineContour.points.length < 8) {
         throw new Error("The detected outline was too small to be a part.");
@@ -72,12 +119,24 @@ export const createProfileExtractionController = () =>
       const partAreaInPixels = partRegions.regionSizes[partLabel];
       const minimumCutoutArea = partAreaInPixels * options.minimumCutoutAreaFraction;
 
+      // A real opening shows the background through it. Printing, labels and glare are the same
+      // class as the background to a threshold, but they are not the same colour as it, so an
+      // enclosed region only counts as a cutout when it looks like what surrounds the part.
+      const backgroundIntensity = measureBorderIntensity(greyscale, width, height);
+
       const cutoutContours = backgroundRegions.regionSizes
         .map((size: number, label: number) => ({ size, label }))
         .filter(
           ({ size, label }) =>
             !backgroundRegions.isRegionTouchingBorder[label] && size >= minimumCutoutArea,
         )
+        .filter(({ label }) => {
+          const meanIntensity = measureRegionIntensity(greyscale, backgroundRegions.labels, label);
+          return (
+            Math.abs(meanIntensity - backgroundIntensity.mean) <=
+            Math.max(backgroundIntensity.deviation * 2, options.minimumCutoutIntensityMatch)
+          );
+        })
         .map(({ label }) => traceRegionBoundary(backgroundRegions.labels, width, height, label))
         .filter((contour) => contour.points.length >= 8);
 
