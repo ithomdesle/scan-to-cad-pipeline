@@ -1,197 +1,105 @@
 # Scan-to-CAD Pipeline
 
-Automated pipeline: 3D scan (STL/OBJ) → feature extraction → LLM-generated OpenSCAD → STEP for Onshape
+One command in, one STEP file out: a 3D scan (STL/OBJ) becomes an editable B-Rep solid you can open in Onshape.
 
-**One command in, one STEP file out.** Fully headless, no GUI steps.
+```bash
+scan2cad scan.stl -o ./output
+```
 
-## Architecture
+## How it works
 
-1. **Capture**: Meshroom or RealityScan on RTX 5090 (AI PC: 192.168.1.29) → STL/OBJ mesh
-2. **Clean**: meshoptimizer WASM — decimate to ~100k faces, remove small components, fill holes
-3. **Features**: RANSAC plane/cylinder/hole fitting → `features.json` with dimensions
-4. **Generate**: Local LLM (LM Studio @ 192.168.1.144:1001) drafts OpenSCAD from dimension spec
-5. **Export**: `openscad -o part.step part.scad` → STEP AP214/AP242
+| Stage | What happens |
+| --- | --- |
+| 1. Load | Binary STL, ASCII STL or OBJ is parsed and its vertices welded |
+| 2. Clean | meshoptimizer decimation, stray-component removal by surface area, boundary-loop hole filling |
+| 3. Extract | Surface patches grown by normal continuity, then fitted as planes and cylinders; concave cylinders become holes |
+| 4. Model | The measurements become a build123d model — drafted by a local language model, or directly from the geometry |
+| 5. Export | OpenCASCADE writes STEP AP214 or AP242 |
+
+The output is a real B-Rep solid. A 40 mm washer with a 12 mm bore exports as four faces — two planar, two cylindrical — not a tessellated shell. You can fillet, shell and sketch on those faces in Onshape.
+
+## Why build123d and not OpenSCAD
+
+OpenSCAD cannot export STEP. Its `-o` flag supports STL, OFF, AMF, 3MF, DXF, SVG, CSG and PNG, and STEP export has been an [open request since 2014](https://github.com/openscad/openscad/issues/893) with [no native implementation](https://github.com/openscad/openscad/wiki/Project:-Add-support-for-exporting-models-in-STEP-format). This pipeline targets build123d instead, which drives the OpenCASCADE kernel directly and treats STEP as a first-class output.
 
 ## Installation
 
-### Prerequisites
-
-- **Node.js** ≥18.0.0
-- **OpenSCAD** installed and in PATH
-- **LM Studio** running at http://192.168.1.144:1001/lmstudio/v1 with a model loaded
-- **LM_API_KEY** environment variable set
+Requirements: Node.js >= 18, Python >= 3.10.
 
 ```bash
-# Install OpenSCAD (Ubuntu/Debian)
-sudo apt install openscad
-
-# Or download from: https://openscad.org/downloads.html
+pnpm install
+pnpm setup:python   # creates .venv and installs build123d + the OpenCASCADE kernel
+pnpm build
 ```
 
-### Setup
-
-```bash
-cd cad-pipeline
-npm install
-npm run build
-```
-
-### Environment
-
-```bash
-export LM_API_KEY="your-lm-studio-api-key"
-```
+`pnpm setup:python` uses `uv` when it is available and falls back to `python3.12`/`3.11`/`3.10` with `venv`. The OpenCASCADE wheel is large; the first install takes a few minutes.
 
 ## Usage
 
-### Basic: Convert existing mesh
-
 ```bash
-npm start -- input.stl -o ./output
+# Straight from the measured geometry, no language model involved
+node dist/cli.js scan.stl -o ./output --no-llm
+
+# With a local model drafting the CAD script
+node dist/cli.js scan.stl -o ./output --language-model http://127.0.0.1:1234/v1 --model my-model
+
+# AP242 instead of AP214
+node dist/cli.js scan.stl -o ./output --step-format ap242
 ```
 
-### With custom config
+### Options
 
-```bash
-npm start -- input.obj --config config.json
-```
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `-o, --output <directory>` | Where the artifacts are written | `./output` |
+| `-c, --config <file>` | JSON configuration; command line flags still win | none |
+| `--target-faces <count>` | Triangle budget after decimation | `100000` |
+| `--language-model <url>` | OpenAI-compatible endpoint (LM Studio, Ollama, vLLM) | `http://127.0.0.1:1234/v1` |
+| `--model <name>` | Model to request | `local-model` |
+| `--attempts <count>` | Model retries before falling back to the measured geometry | `3` |
+| `--python <path>` | Interpreter that has build123d | `.venv/bin/python` |
+| `--step-format <schema>` | `ap214` or `ap242` | `ap214` |
+| `--no-llm` | Skip the model entirely | off |
 
-### CLI Options
+`LM_API_KEY` is sent as a bearer token when it is set. It is optional: a local LM Studio server does not need one.
 
-```
-scan2cad <input>
+### Output
 
-Arguments:
-  input                 Input mesh file (STL/OBJ) or "capture" to run photogrammetry
+| File | Contents |
+| --- | --- |
+| `part.step` | The solid, ready to import into Onshape |
+| `part.py` | The build123d model that produced it — readable and re-runnable |
+| `features.json` | Every fitted plane, cylinder and hole with its residual |
+| `cleaned.stl` | The decimated, repaired mesh the measurements came from |
 
-Options:
-  -o, --output <dir>    Output directory (default: "./output")
-  -c, --config <file>   Configuration file (JSON)
-  --target-faces <n>    Target face count for decimation (default: "100000")
-  --ai-pc <host>        AI PC host for capture (default: "192.168.1.29")
-  --lm-studio <url>     LM Studio API endpoint (default: "http://192.168.1.144:1001/lmstudio/v1")
-  --openscad <path>     OpenSCAD binary path (default: "openscad")
-  --step-format <format> STEP format (AP214/AP242) (default: "AP214")
-  -h, --help            Display help
-  -V, --version         Display version
-```
+## The language model is optional, and never trusted
 
-## Configuration
+The model drafts a build123d script; it does not get the last word.
 
-Copy `config.example.json` to `config.json` and adjust:
+1. Its output is screened: only `build123d` and `math` may be imported, and file, process, `eval`/`exec` and reflection access are refused outright. A rejected script is never handed to the interpreter.
+2. A surviving script must actually build a solid with positive volume in OpenCASCADE. Verification and export are the same step, so the STEP file on disk is always one the kernel really produced.
+3. Failures go back to the model as feedback, up to `--attempts` times.
+4. If every attempt fails, the pipeline composes the model directly from the fitted geometry and exports that. It always produces a STEP file.
 
-```json
-{
-  "captureMode": "file",
-  "targetFaceCount": 100000,
-  "ransacIterations": 1000,
-  "ransacThreshold": 0.01,
-  "lmStudioEndpoint": "http://192.168.1.144:1001/lmstudio/v1",
-  "lmStudioModel": "local-model",
-  "openscadBinary": "openscad",
-  "stepFormat": "AP214",
-  "outputDir": "./output"
-}
-```
+With `--no-llm`, step 4 is the whole story.
 
-## Output
+## Accuracy
 
-The pipeline produces:
+The deterministic path reconstructs a 40 x 8 mm washer with a 12 mm bore at 9148.32 mm3 against an analytic 9148.318 mm3. Accuracy is bounded by the scan, not the pipeline.
 
-- `output/cleaned.stl` — decimated and cleaned mesh
-- `output/features.json` — extracted geometry features and dimensions
-- `output/part.scad` — LLM-generated OpenSCAD code
-- `output/part.step` — **Final STEP file for Onshape**
+## What this does not do
 
-## Onshape Import
-
-**Editable Solid, NOT Parametric**
-
-- ✅ Import as solid B-Rep geometry
-- ✅ Fillet edges, shell, sketch on faces
-- ❌ NOT parametric feature tree (unless source has embedded PMI/history)
-- ❌ NOT editable dimension-driven features
-
-For organic/freeform shapes: Use the mesh as a reference underlay and re-model manually.
-
-## Limitations
-
-### What Works Well
-
-- **Prismatic mechanical parts**: bores, flats, flanges, fillets, mounting holes
-- **Box-like objects** with clear faces and cylindrical features
-- **Simple brackets, mounts, enclosures**
-
-### What Doesn't Work
-
-- **Organic shapes**: sculptures, figurines, anatomy (no clear geometric primitives)
-- **Complex freeform surfaces**: use mesh as reference, re-model by hand
-- **Fine details** below ~1mm (lost in decimation)
-
-### LLM Behavior
-
-- **LLM generates CAD code** from verbal/dimensional spec, NOT from mesh
-- **Feature extraction (RANSAC)** is pure geometry processing, not LLM work
-- Quality depends on:
-  1. Mesh cleanliness (sharp features, minimal noise)
-  2. Feature extraction accuracy (RANSAC parameters)
-  3. LLM's CAD knowledge (local model varies)
-
-### Recommended Workflow for Organic Shapes
-
-1. Import cleaned mesh into Onshape as reference
-2. Manually sketch and extrude over the mesh
-3. Use mesh for visual guide, not direct conversion
+- **Photogrammetry.** Capture is out of scope; bring your own mesh. Run Meshroom or RealityScan yourself and pass the result in.
+- **A parametric feature tree.** Onshape receives an editable solid, not a history of modelling operations. That is a limit of STEP, not of this pipeline.
+- **Freeform surfaces.** Only planes and cylinders are fitted. Spheres, cones, tori and splines fall back to the bounding shape.
 
 ## Development
 
 ```bash
-npm run dev      # Watch mode (recompile on save)
-npm run build    # Compile TypeScript
-npm run clean    # Remove build artifacts
+pnpm test        # 80 tests; the STEP export suite is skipped without .venv
+pnpm typecheck
+pnpm lint
+pnpm format
 ```
 
-## Pipeline Stages
-
-Each stage is isolated in its own module:
-
-- `src/capture.ts` — Invoke Meshroom/RealityScan or load file
-- `src/clean.ts` — STL/OBJ parsing, decimation, cleanup
-- `src/features.ts` — RANSAC plane/cylinder/hole detection
-- `src/generate.ts` — LM Studio API call, OpenSCAD generation
-- `src/export.ts` — OpenSCAD binary invocation, STEP export
-
-## Troubleshooting
-
-### "OpenSCAD not found"
-
-Ensure `openscad` is in PATH:
-
-```bash
-which openscad
-# If not found, install or specify full path with --openscad
-```
-
-### "LM Studio API error"
-
-1. Verify LM Studio is running at the configured endpoint
-2. Check that a model is loaded in LM Studio
-3. Ensure `LM_API_KEY` is set
-4. Test endpoint: `curl http://192.168.1.144:1001/lmstudio/v1/models`
-
-### "No features detected"
-
-- Increase `ransacIterations` in config (try 5000)
-- Decrease `ransacThreshold` (try 0.005)
-- Check mesh quality — noisy scans produce poor features
-- For organic shapes, features won't be detected (expected)
-
-### STEP file won't import to Onshape
-
-- Try switching `stepFormat` from AP214 to AP242
-- Verify OpenSCAD code is valid (open `part.scad` in OpenSCAD GUI)
-- Check for OpenSCAD errors in pipeline output
-
-## License
-
-MIT
+Conventions for this workspace are in `CLAUDE.md`.

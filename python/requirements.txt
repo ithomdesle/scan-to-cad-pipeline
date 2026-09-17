@@ -1,0 +1,4 @@
+# build123d brings the OpenCASCADE kernel (cadquery-ocp) that actually writes STEP.
+# The version is pinned: build123d 0.9.x declares an unbounded ocpsvg dependency and resolves to an
+# ocpsvg that needs a newer OCP than build123d itself accepts, which leaves an unimportable install.
+build123d==0.11.1

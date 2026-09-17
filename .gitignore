@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.venv/
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
@@ -39,6 +40,7 @@ temp/
 *.step
 *.stp
 *.scad
+part.py
 features.json
 
 # Except test files

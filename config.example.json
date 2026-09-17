@@ -1,19 +1,31 @@
 {
-  "captureMode": "file",
-  "aiPcHost": "192.168.1.29",
-  "aiPcPort": 22,
-  "targetFaceCount": 100000,
-  "removeSmallComponentsThreshold": 0.01,
-  "isFillHoles": true,
-  "ransacIterations": 1000,
-  "ransacThreshold": 0.01,
-  "minPlaneInliers": 100,
-  "minCylinderInliers": 50,
-  "lmStudioEndpoint": "http://192.168.1.144:1001/lmstudio/v1",
-  "lmStudioModel": "local-model",
-  "llmTemperature": 0.2,
-  "llmMaxTokens": 2000,
-  "openscadBinary": "openscad",
-  "stepFormat": "AP214",
-  "outputDir": "./output"
+  "outputDirectory": "./output",
+  "meshCleaning": {
+    "targetTriangleCount": 100000,
+    "simplificationErrorTolerance": 0.01,
+    "smallComponentAreaFraction": 0.01,
+    "isFillHolesEnabled": true,
+    "weldingTolerance": 0.00001
+  },
+  "featureExtraction": {
+    "segmentationAngleToleranceDegrees": 30,
+    "planarDistanceTolerance": 0.25,
+    "minimumFaceAreaFraction": 0.01,
+    "maximumCylinderFitResidualFraction": 0.08
+  },
+  "cadGeneration": {
+    "isLanguageModelEnabled": true,
+    "maximumAttempts": 3,
+    "languageModel": {
+      "endpoint": "http://127.0.0.1:1234/v1",
+      "model": "local-model",
+      "temperature": 0.2,
+      "maximumTokens": 2000,
+      "timeoutMilliseconds": 120000
+    }
+  },
+  "stepExport": {
+    "schema": "ap214",
+    "timeoutMilliseconds": 300000
+  }
 }

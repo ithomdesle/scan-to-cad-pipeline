@@ -1,121 +1,118 @@
 #!/usr/bin/env node
 
-import { Command } from 'commander';
-import { readFile, writeFile, mkdir } from 'fs/promises';
-import { resolve, dirname } from 'path';
-import { captureMesh } from './capture.js';
-import { cleanMesh } from './clean.js';
-import { extractFeatures } from './features.js';
-import { generateOpenSCAD } from './generate.js';
-import { exportSTEP } from './export.js';
-import type { PipelineConfig, PipelineResult } from './types.js';
+import { Command } from "commander";
+import { resolve } from "node:path";
+import { StepSchema } from "./modules/step-export/index.js";
+import {
+  createPipelineRunController,
+  loadConfiguration,
+  PipelineStage,
+  type ConfigurationOverrides,
+} from "./modules/pipeline/index.js";
+
+type CommandLineOptions = {
+  readonly output: string;
+  readonly config?: string;
+  readonly targetFaces?: string;
+  readonly languageModel?: string;
+  readonly model?: string;
+  readonly attempts?: string;
+  readonly python?: string;
+  readonly stepFormat?: string;
+  readonly noLlm?: boolean;
+  readonly llm: boolean;
+};
+
+const parsePositiveInteger = (
+  rawValue: string | undefined,
+  flagName: string,
+): number | undefined => {
+  if (rawValue === undefined) return undefined;
+
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${flagName} must be a positive whole number, received "${rawValue}".`);
+  }
+
+  return parsed;
+};
+
+const parseStepSchema = (rawValue: string | undefined): StepSchema | undefined => {
+  if (rawValue === undefined) return undefined;
+
+  const candidate = rawValue.toLowerCase();
+  if (candidate !== StepSchema.AP214 && candidate !== StepSchema.AP242) {
+    throw new Error(`--step-format must be ap214 or ap242, received "${rawValue}".`);
+  }
+
+  return candidate;
+};
+
+const createReporter = () => {
+  const stageLabels: Readonly<Record<PipelineStage, string>> = Object.freeze({
+    [PipelineStage.LOAD]: "1/5",
+    [PipelineStage.CLEAN]: "2/5",
+    [PipelineStage.EXTRACT]: "3/5",
+    [PipelineStage.MODEL]: "4/5",
+    [PipelineStage.EXPORT]: "5/5",
+  });
+
+  return Object.freeze({
+    onStageStarted: (stage: PipelineStage, message: string) =>
+      console.log(`\n[${stageLabels[stage]}] ${message}`),
+    onDetail: (message: string) => console.log(`      ${message}`),
+  });
+};
 
 const program = new Command();
 
 program
-  .name('scan2cad')
-  .description('Convert 3D scans (STL/OBJ) to editable STEP files for Onshape')
-  .version('1.0.0')
-  .argument('<input>', 'Input mesh file (STL/OBJ) or "capture" to run photogrammetry')
-  .option('-o, --output <dir>', 'Output directory', './output')
-  .option('-c, --config <file>', 'Configuration file (JSON)')
-  .option('--target-faces <n>', 'Target face count for decimation', '100000')
-  .option('--ai-pc <host>', 'AI PC host for capture', '192.168.1.29')
-  .option('--lm-studio <url>', 'LM Studio API endpoint', 'http://192.168.1.144:1001/lmstudio/v1')
-  .option('--openscad <path>', 'OpenSCAD binary path', 'openscad')
-  .option('--step-format <format>', 'STEP format (AP214/AP242)', 'AP214')
-  .action(async (input: string, options: any) => {
+  .name("scan2cad")
+  .description("Convert a 3D scan (STL/OBJ) into an editable STEP solid for Onshape")
+  .version("2.0.0")
+  .argument("<input>", "Input mesh file (.stl or .obj)")
+  .option("-o, --output <directory>", "Output directory", "./output")
+  .option("-c, --config <file>", "Configuration file (JSON); command line flags still win")
+  .option("--target-faces <count>", "Triangle budget after decimation")
+  .option("--language-model <url>", "OpenAI-compatible endpoint, e.g. LM Studio")
+  .option("--model <name>", "Model name to request")
+  .option("--attempts <count>", "How many times the model may retry before falling back")
+  .option("--python <path>", "Python interpreter that has build123d installed")
+  .option("--step-format <schema>", "STEP schema: ap214 or ap242")
+  .option("--no-llm", "Skip the language model and build directly from the measured geometry")
+  .action(async (input: string, options: CommandLineOptions) => {
     try {
-      console.log('🚀 Scan-to-CAD Pipeline starting...\n');
-
-      let config: PipelineConfig;
-      if (options.config) {
-        const configData = await readFile(options.config, 'utf-8');
-        config = JSON.parse(configData);
-      } else {
-        config = {
-          captureMode: input === 'capture' ? 'meshroom' : 'file',
-          aiPcHost: options.aiPc,
-          aiPcPort: 22,
-          inputMeshPath: input === 'capture' ? undefined : resolve(input),
-          targetFaceCount: parseInt(options.targetFaces, 10),
-          removeSmallComponentsThreshold: 0.01,
-          isFillHoles: true,
-          ransacIterations: 1000,
-          ransacThreshold: 0.01,
-          minPlaneInliers: 100,
-          minCylinderInliers: 50,
-          lmStudioEndpoint: options.lmStudio,
-          lmStudioModel: 'local-model',
-          llmTemperature: 0.2,
-          llmMaxTokens: 2000,
-          openscadBinary: options.openscad,
-          stepFormat: options.stepFormat as 'AP214' | 'AP242',
-          outputDir: resolve(options.output),
-        };
-      }
-
-      const result: PipelineResult = {
-        isSuccess: false,
-        stages: {
-          isCapture: false,
-          isClean: false,
-          isFeatures: false,
-          isGenerate: false,
-          isExport: false,
-        },
+      const overrides: ConfigurationOverrides = {
+        inputMeshPath: resolve(input),
+        outputDirectory: resolve(options.output),
+        targetTriangleCount: parsePositiveInteger(options.targetFaces, "--target-faces"),
+        languageModelEndpoint: options.languageModel,
+        languageModelName: options.model,
+        isLanguageModelEnabled: options.llm === false ? false : undefined,
+        maximumAttempts: parsePositiveInteger(options.attempts, "--attempts"),
+        pythonExecutable: options.python,
+        schema: parseStepSchema(options.stepFormat),
       };
 
-      console.log('📷 Stage 1: Capture/Load');
-      const meshPath = await captureMesh(config);
-      console.log(`   ✓ Mesh: ${meshPath}\n`);
-      result.stages.isCapture = true;
+      const configuration = await loadConfiguration(overrides, options.config);
 
-      console.log('🧹 Stage 2: Clean mesh');
-      const cleanedPath = await cleanMesh(meshPath, config);
-      console.log(`   ✓ Cleaned: ${cleanedPath}`);
-      console.log(`   ✓ Target: ${config.targetFaceCount} faces\n`);
-      result.cleanedMeshFile = cleanedPath;
-      result.stages.isClean = true;
+      console.log("scan-to-cad pipeline");
+      console.log(`      input:  ${configuration.inputMeshPath}`);
+      console.log(`      output: ${configuration.outputDirectory}`);
 
-      console.log('🔍 Stage 3: Feature extraction');
-      const featureSpec = await extractFeatures(cleanedPath, config);
-      const featuresPath = resolve(config.outputDir, 'features.json');
-      await mkdir(dirname(featuresPath), { recursive: true });
-      await writeFile(featuresPath, JSON.stringify(featureSpec, null, 2), 'utf-8');
-      console.log(`   ✓ Features: ${featureSpec.features.length} detected`);
-      console.log(`   ✓ Dimensions: ${featureSpec.dimensions.length.toFixed(1)}×${featureSpec.dimensions.width.toFixed(1)}×${featureSpec.dimensions.height.toFixed(1)} mm`);
-      console.log(`   ✓ Saved: ${featuresPath}\n`);
-      result.featuresFile = featuresPath;
-      result.stages.isFeatures = true;
+      const result = await createPipelineRunController(createReporter()).run(configuration);
 
-      console.log('🤖 Stage 4: LLM → OpenSCAD');
-      const openscadCode = await generateOpenSCAD(featureSpec, config);
-      const openscadPath = resolve(config.outputDir, 'part.scad');
-      await mkdir(dirname(openscadPath), { recursive: true });
-      await writeFile(openscadPath, openscadCode, 'utf-8');
-      console.log(`   ✓ Generated: ${openscadPath}`);
-      console.log(`   ✓ Model: ${config.lmStudioModel}\n`);
-      result.openscadFile = openscadPath;
-      result.stages.isGenerate = true;
-
-      console.log('📦 Stage 5: OpenSCAD → STEP');
-      const stepPath = await exportSTEP(openscadPath, config);
-      console.log(`   ✓ STEP file: ${stepPath}`);
-      console.log(`   ✓ Format: ${config.stepFormat}\n`);
-      result.stepFile = stepPath;
-      result.stages.isExport = true;
-
-      result.isSuccess = true;
-
-      console.log('✅ Pipeline complete!');
-      console.log(`\n📄 Output: ${stepPath}`);
-      console.log('\n⚠️  Import note: Onshape will import as editable solid B-Rep,');
-      console.log('   NOT parametric feature tree. You can fillet/shell/sketch on faces.');
-
+      console.log("\nDone.");
+      console.log(`      STEP:     ${result.artifacts.stepFilePath}`);
+      console.log(`      model:    ${result.artifacts.scriptFilePath}`);
+      console.log(`      features: ${result.artifacts.specificationFilePath}`);
+      console.log(`      mesh:     ${result.artifacts.cleanedMeshFilePath}`);
+      console.log(
+        `\nOnshape imports this as an editable B-Rep solid (${result.appliedSchema}); you can fillet, shell and sketch on its faces. It is not a parametric feature tree.`,
+      );
     } catch (error) {
-      console.error('\n❌ Pipeline failed:', error instanceof Error ? error.message : error);
-      process.exit(1);
+      console.error(`\nPipeline failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
     }
   });
 
