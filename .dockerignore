@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+web/node_modules
+dist
+web/dist
+.venv
+output
+test-assets
+*.md
+!README.md
+.DS_Store

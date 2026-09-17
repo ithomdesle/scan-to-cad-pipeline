@@ -117,6 +117,27 @@ This is the accurate route for sheet metal: a silhouette plus two caliper readin
 | Photo | Flat plates, brackets, gaskets, panels — anything of constant thickness | Bends, flanges, anything genuinely 3D |
 | 3D scan | Rounded and prismatic solids with planar and cylindrical faces | Rectangular slots; unmatted shiny metal |
 
+## Docker
+
+```bash
+docker compose up -d
+```
+
+Then open `http://<host-ip>:4000` on your phone. Finished files land in `./output` on the host.
+
+The image carries both runtimes, because the OpenCASCADE kernel only exists as a Python wheel: Node serves the app and does the mesh and image work, Python owns the kernel that writes STEP. It is built in two stages so the toolchain and the frontend build never reach the final image, which still lands around 1.5 GB — the kernel and its VTK dependency account for most of it.
+
+The container runs as the unprivileged `node` user, declares a healthcheck against `/api/health`, and keeps `/app/output` as a volume.
+
+To run it without compose:
+
+```bash
+docker build -t scan-to-cad-pipeline .
+docker run -d -p 4000:4000 -v "$PWD/output:/app/output" --name scan2cad scan-to-cad-pipeline
+```
+
+Note that the containerised web app always builds from the measured geometry. The language-model path is a CLI feature; it is not wired into the server, so nothing in the container reaches out to a model endpoint.
+
 ## Development
 
 ```bash

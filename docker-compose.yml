@@ -1,0 +1,14 @@
+services:
+  scan2cad:
+    build: .
+    image: scan-to-cad-pipeline
+    container_name: scan2cad
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      # Finished STEP files, model sources and feature reports survive a container rebuild.
+      - ./output:/app/output
+    environment:
+      PORT: 4000
+      HOST: 0.0.0.0
