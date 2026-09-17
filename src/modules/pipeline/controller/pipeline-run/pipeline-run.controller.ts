@@ -6,8 +6,15 @@ import {
   readMeshFromFile,
   writeBinaryStereolithography,
 } from "../../../mesh/index.js";
-import { createFeatureExtractionController } from "../../../feature-extraction/index.js";
-import { createCadScriptGenerationController } from "../../../cad-generation/index.js";
+import {
+  createFeatureExtractionController,
+  DEFAULT_PLATE_DETECTION_OPTIONS,
+  extractPlateProfile,
+} from "../../../feature-extraction/index.js";
+import {
+  composePlateScript,
+  createCadScriptGenerationController,
+} from "../../../cad-generation/index.js";
 import { createStepExportController, type StepExportResult } from "../../../step-export/index.js";
 import {
   PipelineStage,
@@ -53,6 +60,18 @@ export const createPipelineRunController = (reporter: PipelineReporter) =>
       reporter.onStageStarted(PipelineStage.MODEL, "Building solid model");
       const stepExportController = createStepExportController(configuration.stepExport);
 
+      const plateProfile = extractPlateProfile(
+        cleaningResult.mesh,
+        configuration.featureExtraction.segmentationAngleToleranceDegrees,
+        DEFAULT_PLATE_DETECTION_OPTIONS,
+      );
+
+      if (plateProfile) {
+        reporter.onDetail(
+          `plate ${plateProfile.thicknessInMillimetres.toFixed(2)} mm thick, outline with ${plateProfile.outline.length} corners, ${plateProfile.cutouts.length} cutouts`,
+        );
+      }
+
       let lastSuccessfulExport: StepExportResult | null = null;
 
       const script = await createCadScriptGenerationController({
@@ -66,7 +85,16 @@ export const createPipelineRunController = (reporter: PipelineReporter) =>
         },
         onAttemptFailed: (attemptNumber, reason) =>
           reporter.onDetail(`Attempt ${attemptNumber} rejected: ${reason}`),
-      }).generate(specification, configuration.cadGeneration);
+      }).generate(
+        specification,
+        {
+          ...configuration.cadGeneration,
+          isLanguageModelEnabled: plateProfile
+            ? false
+            : configuration.cadGeneration.isLanguageModelEnabled,
+        },
+        plateProfile ? composePlateScript(plateProfile) : undefined,
+      );
 
       const acceptedExport = lastSuccessfulExport as StepExportResult | null;
       if (!acceptedExport?.stepFilePath) {

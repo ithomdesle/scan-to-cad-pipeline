@@ -3,3 +3,4 @@ export {
   createProfileExtractionController,
   DEFAULT_PROFILE_EXTRACTION_OPTIONS,
 } from "./controller/profile-extraction/profile-extraction.controller.js";
+export { simplifyClosedPolygon } from "./services/polygon-simplifier/polygon-simplifier.js";

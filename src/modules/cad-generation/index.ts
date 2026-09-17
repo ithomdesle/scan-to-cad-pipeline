@@ -13,3 +13,4 @@ export {
   CAD_SYSTEM_PROMPT,
 } from "./services/cad-prompt-builder/cad-prompt-builder.js";
 export { composeProfileScript } from "./services/build123d-profile-composer/build123d-profile-composer.js";
+export { composePlateScript } from "./services/build123d-plate-composer/build123d-plate-composer.js";

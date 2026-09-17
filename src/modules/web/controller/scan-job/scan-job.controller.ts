@@ -9,9 +9,15 @@ import {
 import {
   createFeatureExtractionController,
   DEFAULT_FEATURE_EXTRACTION_OPTIONS,
+  DEFAULT_PLATE_DETECTION_OPTIONS,
+  extractPlateProfile,
   FeatureKind,
 } from "../../../feature-extraction/index.js";
-import { composeBuild123dScript, composeProfileScript } from "../../../cad-generation/index.js";
+import {
+  composeBuild123dScript,
+  composePlateScript,
+  composeProfileScript,
+} from "../../../cad-generation/index.js";
 import {
   createProfileExtractionController,
   DEFAULT_PROFILE_EXTRACTION_OPTIONS,
@@ -109,6 +115,15 @@ export const createScanJobController = (jobStore: JobStore) =>
         );
 
         jobStore.update(jobId, { progressMessage: "Measuring features" });
+
+        // A plate is reconstructed from its own outline and cutouts; a bounding box would throw
+        // both away, and the cutout walls are too small to survive a face-area threshold.
+        const plateProfile = extractPlateProfile(
+          cleaningResult.mesh,
+          DEFAULT_FEATURE_EXTRACTION_OPTIONS.segmentationAngleToleranceDegrees,
+          DEFAULT_PLATE_DETECTION_OPTIONS,
+        );
+
         const specification = createFeatureExtractionController().extract(
           cleaningResult.mesh,
           DEFAULT_FEATURE_EXTRACTION_OPTIONS,
@@ -121,7 +136,7 @@ export const createScanJobController = (jobStore: JobStore) =>
 
         jobStore.update(jobId, { progressMessage: "Building the solid" });
         const exportResult = await stepExportController.exportScript(
-          composeBuild123dScript(specification),
+          plateProfile ? composePlateScript(plateProfile) : composeBuild123dScript(specification),
           job.outputDirectory,
         );
 
@@ -147,16 +162,23 @@ export const createScanJobController = (jobStore: JobStore) =>
             widthInMillimetres: specification.dimensions.length,
             heightInMillimetres: specification.dimensions.width,
             thicknessInMillimetres: specification.dimensions.height,
-            cutoutCount: holeCount,
+            cutoutCount: plateProfile ? plateProfile.cutouts.length : holeCount,
             outlinePointCount: specification.features.length,
             volumeInCubicMillimetres: exportResult.volume ?? 0,
           }),
-          featureSummary: Object.freeze([
-            `${planeCount} flat face${planeCount === 1 ? "" : "s"}`,
-            `${cylinderCount} round face${cylinderCount === 1 ? "" : "s"}`,
-            `${holeCount} hole${holeCount === 1 ? "" : "s"}`,
-            `${statistics.triangleCount} triangles, ${statistics.isWatertight ? "watertight" : "open mesh"}`,
-          ]),
+          featureSummary: plateProfile
+            ? Object.freeze([
+                `Plate ${plateProfile.thicknessInMillimetres.toFixed(2)} mm thick`,
+                `Outline with ${plateProfile.outline.length} corners`,
+                `${plateProfile.cutouts.length} cutout${plateProfile.cutouts.length === 1 ? "" : "s"}`,
+                `${statistics.triangleCount} triangles, ${statistics.isWatertight ? "watertight" : "open mesh"}`,
+              ])
+            : Object.freeze([
+                `${planeCount} flat face${planeCount === 1 ? "" : "s"}`,
+                `${cylinderCount} round face${cylinderCount === 1 ? "" : "s"}`,
+                `${holeCount} hole${holeCount === 1 ? "" : "s"}`,
+                `${statistics.triangleCount} triangles, ${statistics.isWatertight ? "watertight" : "open mesh"}`,
+              ]),
         });
       } catch (error) {
         jobStore.update(jobId, {

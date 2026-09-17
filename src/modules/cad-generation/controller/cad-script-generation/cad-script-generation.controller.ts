@@ -28,11 +28,14 @@ export const createCadScriptGenerationController = ({
   onAttemptFailed,
 }: CadScriptGenerationDependencies) =>
   Object.freeze({
+    // A caller that has already measured the part more precisely than the generic feature fitter
+    // can - a plate profile, say - supplies that script as the fallback instead.
     generate: async (
       specification: PartSpecification,
       options: CadGenerationOptions,
+      measuredSourceOverride?: string,
     ): Promise<CadScript> => {
-      const deterministicSource = composeBuild123dScript(specification);
+      const deterministicSource = measuredSourceOverride ?? composeBuild123dScript(specification);
 
       if (options.isLanguageModelEnabled) {
         let previousError: string | undefined;

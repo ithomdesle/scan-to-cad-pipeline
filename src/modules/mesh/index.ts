@@ -20,4 +20,5 @@ export {
   createUnitCubeMesh,
   createOpenSquareMesh,
   createWasherMesh,
+  createPlateMesh,
 } from "./services/mesh-fixtures/mesh-fixtures.js";
